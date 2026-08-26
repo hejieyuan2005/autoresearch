@@ -20,6 +20,7 @@ COMMAND: claude
 
 Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
 
+---
 
 # 我的问题
 
@@ -73,3 +74,62 @@ $$\text{bpb} = \frac{\sum_t \text{CE}(\text{token}_t)}{\sum_t \text{bytes}(\text
 BPB 的分母是**真实字节数**，所以「一个 token 覆盖多少字节」这件事被抵消了 —— vocab=256 和 vocab=64k 的模型，在同一个 val_bpb 下可直接比较，**不存在「换个 tokenizer 就能白嫖分数」这条路**。
 
 这也是项目把它钉死为 ground truth 的原因：agent 不能靠改 tokenizer、改 vocab、改 chunk size 来制造虚假改进，能动的只有 `train.py` 里的架构和优化器。
+
+## Q3: 在后台是如何执行的？修改 train.py 后怎么重新拉起训练 + 看效果 + 与上一轮做笔记对比？
+
+### 1. 后台执行机制（依赖 Claude Code 的工具，不是 daemon）
+
+| 工具 | 用途 |
+|------|------|
+| `Bash` 的 `run_in_background: true` | 把命令挂到后台子进程，立刻返回 `task_id` |
+| `TaskOutput(task_id, block=true)` | 等待 / 读取后台任务输出 |
+| `TaskStop(task_id)` | 中断后台任务 |
+| `ScheduleWakeup` | 间隔提醒（适合循环监控） |
+
+训练本身只是**一条 Bash 命令挂到后台**。Claude 不会起常驻 daemon，靠的是 Bash 后台子进程 + 系统在 task 完成时推送 `<task-notification>`。
+
+### 2. 修改 train.py → 后台拉训练的完整流程
+
+```
+1. Edit 工具改 train.py
+2. git add train.py && git commit -m "exp: ..."
+3. Bash: uv run train.py > run.log 2>&1      ← run_in_background=true, timeout=600000
+4. agent 继续做别的事 / 等通知              ← 系统在 task 完成时推 notification
+5. TaskOutput / Read run.log                ← 5 分钟后拿结果
+6. grep -E "^val_bpb:|^peak_vram_mb:" run.log → 抽核心指标
+7. 追加一行到 results.tsv（commit, val_bpb, memory_gb, status, description）
+8. 对比 baseline:
+       val_bpb 降低? → 保留 commit
+            否则   → git reset --hard HEAD~1 回滚
+```
+
+### 3. 关键约定（CLAUDE.md + program.md 强调）
+
+- **重定向到 `run.log`**而不是 tee —— 否则 5 分钟的 step 输出会冲刷上下文
+- **不提交 `results.tsv`、`run.log`、`CLAUDE.md`、`AGENTS.md`、`.venv/`、`results/`、`queue/`、`dev/`**（见 `.gitignore`）
+- 单次若超过 10 分钟由外部 kill（OOM / 死循环保护）
+- `peak_vram_mb` 也必须记录，超显存就拒绝这次改动
+- 启动时已经 export：`PYTORCH_ALLOC_CONF=expandable_segments:True`、`HF_HUB_DISABLE_PROGRESS_BARS=1`
+- seed 固定 42（CPU+CUDA），保证跨次实验可比较
+
+### 4. 与上一轮对比 + 做笔记的两条路径
+
+**量化对比**（自动）：
+- baseline `val_bpb = 1.116492`（commit `228791f`）
+- 上一轮 `1.118343`（commit `d160ccd`，`MATRIX_LR 0.04→0.05` + `WEIGHT_DECAY 0.1→0.2`）→ 涨了 0.0019，`discard`
+- 当前 HEAD 已经被 `git reset` 回 `228791f`，所以 train.py 是 master 干净版本
+
+**做笔记的两类文件**：
+- `results.tsv` —— 量化结果，结构化，每轮一行（agent 的 bandit 记忆）
+- `myproblem.md`（本文件）—— 推理 / 失败原因 / 下一步假设 / 教学性问答
+- `analysis.ipynb` —— 用 matplotlib 画 `val_bpb` vs commit 曲线，每次追加 tsv 后重跑
+
+### 5. 上一轮 discard 的诊断（值得做笔记）
+
+`d160ccd` 同时改了两个变量（`MATRIX_LR 0.04→0.05` **和** `WEIGHT_DECAY 0.1→0.2`），即使 `val_bpb` 涨了，也**分不清是谁造成的**。下一步若想隔离变量影响，应该**单变量改动** + 与 baseline 直接对比。
+
+可参考方向：
+- `ADAM_BETAS (0.8, 0.95) → (0.9, 0.95)` —— beta1 改回 Adam 默认；5 分钟训练样本有限，EMA 衰减 0.8 偏激进
+- `WARMDOWN_RATIO 0.5 → 0.7` —— 后期多花 20% 时间在低 LR 微调
+- `MATRIX_LR 0.04 → 0.03` —— 与上一轮方向相反，验证 LR 敏感度
+- 简化原则（program.md）：同等收益下**更简单的实现胜出**；删除代码得到持平或更好是有价值的「simplification win」
