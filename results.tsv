@@ -1,0 +1,4 @@
+commit	val_bpb	memory_gb	status	description
+228791f	1.116492	44.0	keep	baseline (master HEAD, no train.py changes)
+7a335f3	1.127251	44.0	discard	WARMUP_RATIO 0.0 -> 0.05
+d160ccd	1.118343	44.0	discard	MATRIX_LR 0.04 -> 0.05
