@@ -3,10 +3,15 @@
 ## A800 80G
 
 pip install uv -i https://mirrors.aliyun.com/pypi/simple
+
 pip download -r requirements.txt -d /root/autodl-tmp/packages/
+
 pip install --no-index --find-links=/root/autodl-tmp/packages/ -r requirements.txt
+
 export HF_ENDPOINT=https://hf-mirror.com
+
 uv run prepare.py
+
 uv run train.py
 
 COMMAND: claude
