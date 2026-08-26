@@ -1,3 +1,19 @@
+# 安装&启动
+
+## A800 80G
+
+pip install uv -i https://mirrors.aliyun.com/pypi/simple
+pip download -r requirements.txt -d /root/autodl-tmp/packages/
+pip install --no-index --find-links=/root/autodl-tmp/packages/ -r requirements.txt
+export HF_ENDPOINT=https://hf-mirror.com
+uv run prepare.py
+uv run train.py
+
+COMMAND: claude
+/init
+Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
+
+
 # 我的问题
 
 ## Q1: 是如何实现自我研究的？
